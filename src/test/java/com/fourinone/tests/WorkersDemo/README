@@ -1,0 +1,49 @@
+我们之前看到一个完整的并行计算应用，需要启动很多个实例，parkserver、多个工人、工头，很多时候需要在一台计算机上启动多个工人，一般都是手工启动，特别是使用linux终端时，一个窗口一个窗口登陆上去启动很麻烦，当然也可以写一个批处理脚本一次性启动多个工人，这里我们通过使用fourinone自带的程序API来启动多个进程。
+
+1.如何串行或并行的启动进程
+BeanContext提供了start和tryStart两种方式启动进程，start进程如下 ：
+public static int start(String... params)
+public static int start(Map env, FileAdapter fa, String... params)
+
+start为串行方式，启动多个需要先后依次完成，params为命令参数，可以将一行脚本命令按照空格分成多个参数输入，比如：javac *.java，写为：
+start(“javac”,”*.java”);
+
+也可以通过Map env指定命令运行环境变量和通过FileAdapter fa指定程序运行目录：
+public static StartResult<Integer> tryStart(String... params)
+public static StartResult<Integer> tryStart(Map env, FileAdapter fa, String... params)
+
+tryStart的使用跟start类似，只不过它是并行方式，启动多个无须先后等待，可以同时执行，它返回一个StartResult对象，可以通过轮询StartResult的状态查看进程是否成功完成结束：
+?	StartResult.getStatus()==StartResult.NOTREADY，代表进程还在运行中，未完成或结束
+?	StartResult.getStatus()==StartResult. READY，代表进程已经完成结束
+?	StartResult.getStatus()==StartResult. EXCEPTION，代表进程运行出了错误
+
+注意：如果一个进程是服务监听的，那么它启动后会一直堵塞，因此通过start方式启动不会返回，如果通过tryStart方式启动可以立即返回，但是StartResult的状态一直为NOTREADY（进程运行中），所以一个服务化进程启动后不能通过StartResult的状态为READY来判断它是否启动完成，可以根据进程启动耗时设置一个等待时间等待它启动就绪，详见下面demo。
+
+2.如何杀死进程和超时杀死进程
+StartResult提供了kill方法杀死它所属的进程：public void kill()
+也可以在获取状态时，传入一个超时时间去比对判断是否超时，如果超时那么会自动杀死该进程，并返回异常状态（但是kill返回是完成状态）：public int getStatus(long timeout)，这里timeout为毫秒数。
+比如在轮询获取状态时每次输入一个30秒时间，getStatus(30000)，那么进程运行超过了30秒，会被强行中止并返回。
+这个方法与中止工人计算方式不同 ，这里是真正的杀死进程方式，而不是请求通知方式。
+
+注意：start和tryStart使用非常灵活，可以启动任何进程脚本命令或者批处理命令，但是需要注意父子进程的关系，这里只能杀死父进程，但是杀不了由父进程启动的子进程，比如启动了一个cmd.bat的批处理命令，如果使用kill中止，只能杀死cmd.bat这个进程本身，但是无法杀死在这个批处理中启动的其他进程。因此，如果需要使用kill，最好不要有进程嵌套启动，请转换为一个个的单独进程启动。
+
+3.如何输出进程运行的日志信息
+如果采用了start方式启动进程，那么默认会在系统窗口输出日志，因为多个start会串行先后输出日志，不存在冲突。但是如果采用tryStart方式启动进程，由于是并行方式同时执行，如果都在系统窗口输出日志存在冲突，导致日志信息错乱，因此默认不输出。
+但是StartResult提供了print方法可以单独异步方式输出到一个文件中：
+public void print(String logpath)
+logpath为文件路径，可以是绝对路径，也可以是相对路径，比如：print("log/worker.log");
+
+注意：实际上，对于批处理命令，也可以在启动时通过加入“>> ”参数方式输出日志，比如：tryStart(“build.bat”,” >>log/park.log","2>>&1”)，但是这种方式不是所有情况都适合，如果是启动java或者javac这样的命令使用“>> ”，会被当成一个普通的java输入参数，而不会被shell识别为重定向输出，因为java不是.bat批处理命令，无法启动shell环境。
+
+下面这个demo演示了在一个HelloMain程序里面运行前面的“互相say hello例子”，所有的进程都在在一个main函数里启动、运行和中止退出。
+
+运行步骤：
+1）	输入如下命令：
+java  -cp fourinone.jar; HelloMain
+
+HelloMain首先使用java命令启动ParkServerDemo，并且输出日志到log/park.log，并等待4秒钟保证ParkServer启动完成。
+然后启动两个HelloWorker，分别输出日志到log/worker1.log、log/ worker2.log，并等待5秒钟保证两个HelloWorker启动完成，注意观察worker1启动完成后打印它的状态仍然为NOTREADY，因为它是一个服务化进程。
+最后启动HelloCtor，输出日志到log/ctor.log，由于HelloCtor不是一个服务化进程，因此可以通过轮询判断它的结果是否为READY，如果已完成，那么kill掉以上ParkServer和2个HelloWorker进程，HelloCtor本身不需要kill，因为非服务化进程运行结束会退出。
+
+如果打开进程管理器观察，会发现运行时一共有5个java进程启动（一个main函数本身的主进程，1个parkserver、2个HelloWorker和1个HelloCtor共4个子进程），运行结束，这5个java进程全部消失。
+打开log目录下，可以看到生成了park.log、worker1.log、worker2.log、ctor.log4个日志文件，里面记录了进程运行过程的信息。

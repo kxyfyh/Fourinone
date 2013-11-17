@@ -1,0 +1,243 @@
+Fourinone2.0里通过FttpAdapter和FileAdapter实现文件io的支持。其中，FttpAdapter提供对远程文件的操作，FileAdapter提供对本地文件的操作，两者api和使用相似，这里主要说明FttpAdapter：
+
+FttpAdapter提供了对分布式文件的便利操作, 将集群中所有机器的硬盘资源利用起来，通过统一的fttp文件路径访问，如:
+windows：fttp://192.168.0.1/d:/data/a.log
+linux：fttp://192.168.0.1/home/user/a.log
+
+比如以这样的方式读取远程文件：
+FttpAdapter fa = FttpAdapter("fttp://192.168.0.1/home/log/a.log");
+fa.getFttpReader().readAll();
+
+提供对集群文件的操作支持，包括：
+1、元数据访问，添加删除，按块拆分, 高性能并行读写，排他读写（按文件部分内容锁定），随机读写，集群复制等
+2、对集群文件的解析支持（包括按行，按分割符，按最后标识读取）
+3、对整形数据的高性能读写支持（ArrayInt比ArrayList存的更多更快）
+4、两阶段提交和事务补偿处理
+5、自带一个集群文件浏览器，可以查看集群所有硬盘上的文件（不同于hadoop的namenode,没有单点问题和容量限制）
+
+总的来说, 将集群看做一个操作系统，像操作本地文件一样操作远程文件。
+但是fourinone并不提供一个分布式存储系统，比如文件数据的导入导出、拆分存储、负载均衡，备份容灾等存储功能，不过开发人员可以利用这些api去设计和实现这些功能，用来满足自己的特定需求。
+
+一、如何搭建配置FttpAdapter环境
+FttpAdapter的使用很简单，在每台计算机上启动一个FttpServer即可，另外需要启动一个ParkServer负责协同。ParkServer也可以和其中一个FttpServer放在相同计算机上
+
+1、启动ParkServerDemo（它的IP端口已经在配置文件的PARK部分的SERVERS指定）
+2、每台计算机启动FttpServer,需要指定该计算机的ip为输入参数
+
+启动好后，然后打开浏览器访问http://localhost:9080/admin/fttp.jsp，可以看到整个集群的文件系统(如下图)，说明启动成功。这里的localhost是默认值，通常为ParkServer的ip.
+效果图：
+
+注意：由于FttpAdapter实现了简单http身份认证，初次打开集群文件浏览器会提示输入账号密码，请打开config.xml配置文件，找到WEBAPP部分的配置项，SERVERS可以配置ip和端口，USERS可以配置多个账号密码，用逗号分隔。
+<PROPSROW DESC="WEBAPP">
+    <SERVERS>localhost:9080</SERVERS>
+    <USERS>admin:admin,guest:123456,test:test</USERS>
+</PROPSROW>
+
+可以动态增加或者关闭FttpServer,然后刷新fttp.jsp，查看及时更新的文件目录。
+
+二、如何访问集群文件根目录：
+启动FttpAdapter后，可以使用它的api进行相关操作：
+FttpAdapter.fttpRoots()是一个静态方法，可以得到集群文件系统根目录，它返回一个String数组，通常是ip字符对应每台计算机。
+listRoots（）方法可以得到每台计算机上的硬盘目录，比如：
+FttpAdapter fa = new FttpAdapter("fttp://"+fttproots[i]);
+String[] roots = fa.listRoots();
+
+FttpRootDemo显示了获取集群文件的根目录和它们各自下面的硬盘目录
+
+三、如何访问和操作远程文件
+FttpAdapter fa = new FttpAdapter("fttp://192.168.0.1/home/qianfeng.py/fttp/tmp/1.log");
+上面实例化一个FttpAdapter类，并输入一个fttp路径，可以是一个目录路径，也可以是个文件路径
+FttpAdapter类提供了一系列访问远程文件的方法：
+createDirectory和createFile方法分别创建目录和文件
+
+rename方法进行重命名，比如将fa的文件名重命名为2.log:
+fa.rename("2.log")
+rename方法返回一个新的FttpAdapter对象，表示命名后的文件
+
+copyTo方法进行集群内复制，比如：
+fa.copyTo("fttp://192.168.0.2/home/qianfeng.py/fttp/tmp/3.log")
+表示将fa文件复制到192.168.0.2计算机上的指定目录下
+copyTo方法返回一个新的FttpAdapter对象，表示复制后的文件
+
+delete方法表示删除该文件，比如
+fa.delete()
+
+getProperty方法获取文件或者目录属性，它返回一个FileProperty对象，包含了
+exists（）文件或者目录存在
+isFile() 是文件
+isDirectory() 是目录
+isHidden() 是隐藏文件
+canRead() 可读
+canWrite（）可写
+lastModifiedDate() 最后修改时间
+length() 文件长度
+getParent() 父目录
+getName() 名称
+getPath() 路径
+list() 子文件列表
+一系列方法用于获取文件属信信息
+
+getChildProperty方法返回一个FileProperty数组，用于获取所有子文件的属性
+
+FttpOperateDemo演示了创建一个远程文件目录，并在改目录下创建、重命名、复制文件，打印文件属性，最后删除的基本操作功能。
+
+四、如何进行集群内文件复制和并行复制
+集群文件复制是经常面临的需求，比如备份容灾，文件迁移，同步数据等等
+FttpAdapter提供了简单高效的文件复制方法，支持远程文件的集群内复制
+FttpAdapter fromfile = new FttpAdapter("fttp://192.168.0.1/home/log/a.log");
+FttpAdapter tofile = fromfile.copyTo("fttp://192.168.0.2/home/log/a.log",FileAdapter.m(1));
+上面代码代表将a.log文件复制到其他机器并得到相应的文件对象
+这里的copyTo方法的第二个参数，表示复制时，每次以1M的速度传输
+FileAdapter.m(1) 1M
+FileAdapter.g(1) 1G
+FileAdapter.k(1) 1k
+数字1可以自由设置为其他数字，copyTo的默认值是每次以1M的速度，可以根据网络情况调整这个参数，达到最优化。
+
+FttpCopyDemo演示了集群中两台机器间的复制功能。
+
+如果要进行并行复制，可以使用tryCopyTo，它的使用和copyTo一样，只不过是立即返回一个Result<FttpAdapter>对象，需要检查Result的getStatus是否复制完成，状态显示就绪代表复制已完成，这时可以获取到复制后的文件对象。
+
+FttpMulCopyDemo演示了将一台计算机上的a.log文件并行复制到4台计算机上，并通过结果状态检查复制是否完成
+
+下面是内网环境下向4台机器复制1g文件的测试结果(均为4核4G内存配置)
+内网（并行复制）：完成耗时39秒，速度大约是105M/S
+内网（串行复制）：完成耗时60秒，速度大约是68M/S
+由此可以观察到如果是内网并行复制的速度比串行要快很多
+局域网的传输数据的极限是100M/S，传统的串行复制无法超越这个速度，但是并行的传送总量和花费时间算下来会超过100M/S
+外网环境的话受网络带宽局限，速度大约是3.6M/S
+
+五、如何读写远程文件
+FttpAdapter是通过FttpReadAdapter来直接读取远程文件内容
+FttpAdapter fa = new FttpAdapter("fttp://192.168.0.1/home/log/1.log");
+FttpReadAdapter reader = fa.getFttpReader();
+byte[] bts = reader.readAll();
+上面是读取整个文件的内容，如果文件内容很大，每次只读取一部分内容，需要指定FttpReadAdapter的读取范围：
+FttpReadAdapter reader = fa.getFttpReader(5，10);
+byte[] bts = reader.readAll();
+上面表示从第5个字节，往后读10个字节
+fa.getFttpReader(5，FileAdapter.m(8)) 从第5个字节往后读8M
+fa.getFttpReader(5，FileAdapter.k(512)) 从第5个字节往后读512K
+
+FttpAdapter是通过FttpWriteAdapter来直接写入远程文件内容
+FttpAdapter fa = new FttpAdapter("fttp://192.168.0.1/home/log/1.log");
+FttpWriteAdapter writer = fa.getFttpWriter();
+int r = writer.write("hello world".getBytes());
+上面的FttpWriteAdapter没有指定写入范围，默认为追加在文件末尾，如果需要指定范围：
+FttpWriteAdapter writer = fa.getFttpWriter(5，10);
+int r = writer.write("hello world".getBytes());
+上面表示从第5个字节开始，往后写10个字节，写入内容为“hello world”，如果写入内容超出10则截断，不够则填补空位。
+
+除readAll和write外，也提供readAllSafety和writeSafety方法，它们用法一样，但是代表排它读写，主要用于并发读写。
+
+对于数字存储，FttpAdapter也提供整形读写，可以使用getIntFttpReader和getIntFttpWriter，操作跟字节读写类似，只是写入或者返回的是整数，比如：
+fa.getIntFttpReader(5,3) 表示从第5个整数开始，往后读3个整数
+fa.getIntFttpWriter().writeInt(new int[]{1,2,3}） 表示将一个整数数组写入文件末尾
+同样，整形读写也都提供排它读写
+
+FttpWriteReadDemo演示了对远程文件的读写操作
+
+六、如何解析远程文件
+假设通过FttpAdapter已经读取到远程文件中一部分数据，如下：
+FttpAdapter fa = new FttpAdapter("fttp://192.168.0.1/home/log/1.log");
+FttpReadAdapter reader = fa.getFttpReader();
+byte[] bts = reader.readAll();
+上面得到一个byte数组，那么如何解析它呢，可以通过byte初始化得到一个ByteReadParser
+ByteReadParser brp = FileAdapter.getByteReadParser(bts);
+ByteReadParser提供了方便的按数量，按行，按分割符，按结束符解析方法：
+
+public byte[] read(int totalnum);
+如：brp.read(100);//读前100个字符
+
+public byte[] readLine();
+如：new String(brp.readLine())//读一行字符，多次调用直到末尾
+
+public byte[] read(byte[] split);
+如：brp.read("@#$".getBytes());//读以“@#$”做分割符号的前面的字符段，多次调用直到末尾
+
+public byte[] readLast(byte[] split);
+如：brp.readLast（"。".getBytes()）;//读最后一个以句号结尾的前面的字符段
+
+FttpParseDemo演示使用ByteReadParser的基本解析操作
+
+七、如何并行读写远程文件
+FttpAdapter是通过FttpReadAdapter的tryReadAll方法进行并行读
+FttpAdapter fa = new FttpAdapter("fttp://192.168.0.1/home/log/1.log");
+Result<byte[]> rs = fa.getFttpReader().tryReadAll();
+
+调用tryReadAll会立即返回一个Result<byte[]>,但是不能马上获取到结果值,需要轮循检查它的状态是否就绪
+rs.getStatus()有三种状态:
+Result.NOTREADY 未就绪
+Result.READY 就绪
+Result.EXCEPTION 异常
+
+轮循直到状态准备就绪：
+while(rs.getStatus()==Result.NOTREADY);
+
+状态就绪就可以通过getResult()获取到读取结果:
+byte[] bts = rs.getResult();
+
+可以对一个远程文件的不同部分同时并行读写，也可以对多个远程文件同时并行读写，比如：
+String fttppath = "fttp://192.168.0.1/home/log/1.log";
+FttpAdapter fa0 = new FttpAdapter(fttppath);
+FttpAdapter fa1 = new FttpAdapter(fttppath);
+FttpAdapter fa2 = new FttpAdapter(fttppath);
+Result<byte[]> rs0 = fa0.getFttpReader(0,5).tryReadAll();
+Result<byte[]> rs1 = fa1.getFttpReader(5,5).tryReadAll();
+Result<byte[]> rs2 = fa2.getFttpReader(10,5).tryReadAll();
+上面表示3个同时并行的读取，分别的从一个文件的0，5，10位置向后读5个字节。
+如果是并行写，则是：
+Result<Integer>[] rs0 = fa0.getFttpWriter(0,5).tryWrite("hello".getBytes());
+Result<Integer>[] rs1 = fa1.getFttpWriter(5,5).tryWrite("world".getBytes());
+Result<Integer>[] rs2 = fa2.getFttpWriter(10,5).tryWrite("fttp!".getBytes());
+
+注意：上面fa0,fa1,fa2是3个不同的FttpAdapter，而不是同一个FttpAdapter，否则后面的getFttpReader指定的读取范围会覆盖前面的范围，导致产生意外错乱。由于是对同一个远程文件并行读写，所以fa0,fa1,fa2的fttppath相同，如果对多个远程文件并行读写，则fttppath不同。
+
+FttpMulWriteReadDemo演示了并行对三个远程文件进行写，然后再并行进行读，在轮循状态时，如果就绪读取到结果后，将rs[i]设置为null表示不再重复检查。
+
+八、如何批量并行读写远程文件和事务补偿处理
+FileBatch类提供了一系列对批量并行读写操作支持（包括对FttpAdapter和FileAdapter），它跟并行读写的区别是不需要检查结果，会等到所有并行读写任务全部完成才返回，并在发生异常时提供事务补偿支持。
+
+1、批量并行读：
+public Result<byte[]>[] readAllBatch(TryByteReadAdapter[] fras)
+实现对多个FttpReadAdapter任务的批量读，输入一个FttpReadAdapter数组，并行进行它们的读取，直到每个FttpReadAdapter读完后，以数组的方式批量输出它们对应的结果，比如：
+FttpReadAdapter[] fras = new FttpReadAdapter[3];
+fras[0]=new FttpAdapter(fttppath).getFttpReader(0,5);
+fras[1]=new FttpAdapter(fttppath).getFttpReader(5,5);
+fras[2]=new FttpAdapter(fttppath).getFttpReader(10,5);
+Result<byte[]>[] rs = new FileBatch().readAllBatch(fras);
+上面表示并行从3个位置读一个文件内容，等全部读完后，将对应的结果放在一个数组里返回
+
+2、批量并行写：
+FttpWriteAdapter[] fwas = new FttpWriteAdapter[3];
+fwas[0]=new FttpAdapter(fttppath).getFttpWriter(0,5);
+fwas[1]=new FttpAdapter(fttppath).getFttpWriter(5,5);
+fwas[2]=new FttpAdapter(fttppath).getFttpWriter(10,5);
+Result<Integer>[] rs = new FileBatch().writeBatch(fwas, "abcde".getBytes());
+上面表示并行对一个文件的3个位置写入“abcde”字符，等全部写完后，返回对应结果数组
+
+注意：这里跟并行读写一样，3个FttpReadAdapter或者FttpWriteAdapter是由3个不同的FttpAdapter生成，而不是同一个生成
+
+3、批量并行读写：
+Result<Integer>[] rs = new FileBatch().readWriteBatch(fras,fwas);
+表示将上面的批量读和批量写在一个过程中完成，从fras里每个FttpReadAdapter读，然后通过fwas里对应的每FttpWriteAdapter写入，所有读写完成后返回写入结果数组
+
+4、事务补偿处理：
+在批量并行读写过程中，如果其中一个FttpReadAdapter或者FttpWriteAdapter发生错误，那么框架会进行分布式事务处理，进行两阶段提交，然后调用undo操作进行事务补偿处理，撤消已经产生的改动和影响。
+
+FileBatch类提供了对undo方法的定义
+public Result[] undo(Result[] rtarr)
+rtarr是传入的结果，然后返回undo的撤消处理后的结果
+比如调用readAllBatch发生错误，FileBatch会将结果传入undo进行撤消操作，然后才返回结果
+因此开发者需要自己实现undo方法的内容，继承FileBatch类覆盖undo方法：
+public Result[] undo(Result[] rtarr){
+    for(int i=0;i<rtarr.length;i++){
+	if(rtarr[i].getStatus()==Result.EXCEPTION)
+		System.out.println("Result index"+i+" Error");
+    return rtarr;
+}
+上面的undo方法将发生异常的结果的序号输出显示
+
+所有的批量读写方法都可以以排它的方式进行，指定boolean locked参数即可
+另外：除了byte批量并行读写外，也支持所有的整形批量并行读写，api和操作几乎类似
+
+FttpBatchWriteReadDemo演示了一个批量并行读、批量并行写、批量并行读写操作和事务补偿操作

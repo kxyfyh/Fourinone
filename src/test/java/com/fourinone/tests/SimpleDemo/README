@@ -1,0 +1,16 @@
+本demo用最简洁的代码示范fourinone如何进行分布式计算，fourinone采用一种工头链式结合工人并行的计算结构简化分布式计算，能够通俗易懂并能深入控制整个计算过程
+
+SimpleCtor：是一个工头实现，它实现giveTask接口，并通过getWaitingWorkers获取线上工人节点（工人节点为一个独立进程，它可以独立部署一台机器也可以一台机器部署多个），并调用该工人的doTask方法完成任务，传入的任务是一句“hello”的话。注意工人的doTask方法是一个异步调用，它会马上返回一个result，但是没有值，需要轮循result是否有值为止，有值就代表工人已经处理完该任务了。这样做是因为当多个任务分配给多个工人完成时，他们之间是并行的，不会等待前个工人完成再去分配下一个工人任务。
+
+SimpleWorker：是一个工人实现，它实现doTask接口，从WareHouse获取到工头的传入参数word，并回应“hello word”，它的输入输出类型都是WareHouse，WareHouse是一个map结构，可以放置任何类型的对象。SimpleWorker通过waitWorking开始等待任务，waitWorking需要输入一个参数，给该工人指定一个类型描述，在更复杂的应用中，可以设计多种类型的工人，比如有的做任务处理，有的做任务结果合并。
+
+ParkServerDemo:是负责分布式计算过程的协同服务,它必须启动才能完成分布式计算.
+
+运行步骤：
+1、启动ParkServerDemo（它的IP端口已经在配置文件的PARK部分的SERVERS指定）
+2、运行SimpleWorker（它的IP端口已经在配置文件的WORKER部分的SERVERS指定）
+3、运行SimpleCtor
+
+注意:以上程序启动时都需要配置文件config.xml,可以将配置文件、程序class文件、fourinone.jar三者放相同目录，如果class文件有包名，需要放在包根目录处，这样能默认找到。也可以通过BeanContext.setConfigFile指定其他目录位置，特别是使用eclips会自动生成class目录和运行目录，导致具体路径不清晰，可以尝试指定绝对路径，或者慢慢调试改成相对路径。
+
+掌握fourinone最基本的工头工人分布式计算方式后， 可以进一步学习另一个完整的demo, 会示范多个任务多个工人的分配和结果轮循以及多个工头的链式处理方式。

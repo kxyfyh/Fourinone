@@ -1,0 +1,18 @@
+对于像淘宝这样上万台服务器集群环境的大型互联网应用, 通常我们面临这样一种需求:
+
+我们需要一个集群管理者管理集群里的服务器，同一个集群中任何一台服务器宕机,其他服务器都能感知. 如果是集群管理者宕机，集群中所有的服务器不能受任何影响，能实时切换到备份管理者上被提供服务。
+
+这个demo演示了如何利用fourinone在简单几行代码下去实现上述功能
+
+GroupManager：是一个集群管理者，它有master和slave两个实例，实际上你可以建立任意多的slave
+
+GroupServer：代表一个集群中的server, 它启动后会注册自己的信息到集群管理者，然后监控集群中其他机器的状况并实时反馈。它使用一个getLastest的api，这个api可以返回最新的集群状况，如果不是最新的就返回null
+pl.create("group", args[0], args[0], AuthPolicy.OP_ALL, true);
+上面的方法进行节点的注册，其中前3个参数分别是domain,node,value，AuthPolicy.OP_ALL表示该节点的权限为公共，也就是可以被其他进程修改删除，true代表他是个保持连接节点，如果失去连接，该节点会被删除。
+
+运行步骤：
+1、启动GroupManager进程，输入参数分别为M，代表master
+2、启动GroupManager进程，输入参数分别为S，代表slave
+3、启动3个GroupServer进程，每次输入参数分别为“one,two,three”代表3台集群server（它访问master的IP端口已经在配置文件指定）
+
+观察每个GroupServer进程里的输出，每个进程窗口都会有集群里所有服务器的信息输出，可以关掉其中一个进程模拟一个GroupServer宕机，此时其他两个GroupServer进程会实时输出集群更新信息，请再关掉master进程模拟GroupManager宕机，会发现两个GroupServer进程会即时选取slave为新的领导者，请把刚才关掉的一个GroupServer进程恢复，会发现所有GroupServer在master宕机情况下，也能实时得到集群的最新信息。

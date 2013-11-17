@@ -1,0 +1,27 @@
+FourInOne也可以当成简单的mq来使用，该demo演示了队列和主题订阅两种模式的实现
+
+一、队列
+将domain视为mq队列，每个node为一个队列消息，检查domain的变化来获取队列消息。
+Sender：是一个队列发送者，他发送消息的实现是在queue上创建一个匿名节点来存放消息
+pl.create(queue, (Serializable)obj);
+
+Receiver：是一个队列接收者，他轮循queue上有没有最新消息，有就取出，并删除该节点，注意他是每次获取第一个消息，这样保证消息读取的顺序。
+
+运行步骤：
+1、启动ParkServerDemo（它的IP端口已经在配置文件指定）
+2、运行Sender
+3、运行Receiver
+
+二、主题订阅
+可以将domain视为订阅主题，将每个订阅者注册到domain的node上，发布者将消息逐一更新每个node，订阅者监控每个属于自己的node的变化事件获取订阅消息，收到后清空内容等待下一个消息，多个消息用一个arraylist存放
+
+Publisher：是一个主题发布者，他通过pl.get(topic)获取topic主题的所有订阅者节点，并将消息更新到每个节点上，如果有多个追加到arraylist存放
+
+Subscriber：是一个消息订阅者，他通过subscrib(String topic, String subscribeName, LastestListener lister)实现消息订阅，其中3个参数分别是主题名、订阅者名称、事件处理实现。Subscriber实现了LastestListener事件处理接口happenLastest(LastestEvent le)，这个接口会传入更新的节点内容对象，然后Subscriber用一个空的arraylist清空内容，等待下一次接收消息。happenLastest有个boolean返回值，如果返回false，它会一直监控变化，继续有新的变化时还会进行事件调用；如果返回true，它完成本次事件调用后就终止。
+
+运行步骤：
+1、启动ParkServerDemo（它的IP端口已经在配置文件指定）
+2、运行Subscriber，因为Subscriber可以有多个，传入不同的subscribeName参数代表不同的Subscriber
+3、运行Publisher
+
+FourInOne不实现JMS的规范，不提供JMS的消息确认和消息过滤等特殊功能，不过开发者可以基于FourInOne自己去扩充这些功能，包括mq集群。如果需要事务处理可以将多个消息封装在一个集合内进行发送，上面的队列接收者收到消息后删除实际上是一种消息确认方式，也可以将业务逻辑处理完后再进行删除。如果需要持久保存消息可以再封装一层消息发送者，发送前后根据需要进行数据库或者文件持久保存。利用一个独立的domain/node建立队列或者主题的key隐射，再仿照上面分布式缓存的智能根据key定位服务器的做法实现集群管理。

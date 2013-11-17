@@ -1,0 +1,18 @@
+利用fourinone可以轻松实现分布式缓存功能：
+
+1、中小应用的缓存实现：直接启动一个parkserver，分别在两个java进程中使用ParkLocal的create和get方法即可实现缓存的读写操作。
+
+2、如果是大型网站的缓存，单台parkserver的压力不能承受，需要建立多台CacheServer，并且使用CacheFacade进行负载均衡，CacheFacade会根据key自动寻找存储它的CacheServer，数据在多台CacheServer上是均匀分布的，虽然每台CacheServer的数据都不一样，但是每台CacheServer都可以自己的备份服务器，CacheServer出现故障时，几乎实时就能切换到备份服务器处理请求，所以即能保证高性能又能保证高可靠。
+
+该demo同时演示了小型缓存和大型缓存的使用。
+CachePutDemo：先将100条数据分布式存储在A,B,C 3台缓存server中，然后再将这100条数据的key保存在parkserver的小型缓存中。
+CacheGetDemo：先将100条数据的key从parkserver中取出，再根据key从分布式缓存的A,B,C 3台server中取出。
+
+运行步骤：
+1、启动3个CacheServer进程，每个输入参数分别为A,B,C
+2、启动ParkServerDemo（它的IP端口已经在配置文件指定）
+3、启动CacheFacadeDemo（它的IP端口已经在配置文件指定）
+4、运行CachePutDemo
+5、运行CacheGetDemo
+
+大家熟悉了fourinone的分布式缓存功能， 可以自己实现一个web应用的分布式session了，只需要将生成的key写入客户端cookie即可。

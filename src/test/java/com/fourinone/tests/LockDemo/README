@@ -1,0 +1,9 @@
+LockDemo是利用fourinone进行分布式锁的实现：
+可以启动多个LockDemo实例，每个实例在fourinone上建立一个自己的node,  node的domain为lock， node的值为node
+然后再轮循判断domain lock的第一个元素是否是自己的node，如果是，就执行，这里模拟线程执行8秒，执行完将自己的node删除，代表释放锁；如果不是，就继续等待。
+ 
+运行步骤：
+1、启动ParkServerDemo（它的IP端口已经在配置文件指定）
+2、运行LockDemo，node名称动态传入参数
+
+先后启动了多个LockDemo实例,观察他们按照预期的顺序先后获取到锁并进行8秒的业务操作。
